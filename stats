@@ -1,0 +1,157 @@
+#!/bin/bash
+################################################################################
+#
+# stats
+#
+# -----------------
+# EvVikare 
+# CS344 -- Summer 2017
+# Program 1 Assignment
+# -----------------
+#
+# Calculate mean and median of numbers input by file or stdin
+#
+# General command format: stats {-rows|-cols} [input_file]
+# Input: whole numbers separated by tabs, each line has same number of values
+#
+################################################################################
+
+# Clean up temp files if program ends unexpectedly 
+trap "rm -f evvikare_temp*; 
+    echo -e '\nevvikare stats script ended unexpectedly.\n'; 
+    exit 1" INT HUP TERM 
+
+# Generate temp files with default name and unique process ID ($$) as a "tail."
+datafilepath="evvikare_temp_datafile$$" 
+averagesfile="evvikare_temp_avgfile$$"
+mediansfile="evvikare_temp_medfile$$"
+
+command_validation () {
+    # Command must have 1 or 2 arguments, arg 1 must begin with either -r or -c
+    if [[ ( ! ( $# == 1 || $# == 2 ) ) || ( ! ( $1 == -r* || $1 == -c* ) )]]
+    then
+        echo './stats {-rows|-cols} [file]' >&2
+        exit 1
+    fi
+}
+
+get_data_from_source () {
+    if [[ $# == 1 ]]
+    then
+        inputsource=/dev/stdin
+    else
+        validate_file $*
+        inputsource=$2
+    fi
+
+    while read line
+    do
+	    echo -e "$line" >> $datafilepath
+    done < $inputsource
+}
+
+validate_file () {
+	if [[ ! ( -r $2 ) ]]
+	then
+		echo "$0: cannot read $2" >&2
+		exit 1
+	elif [[ ! ( -s $2 ) ]]  # An empty file is not an error; just print headers
+	then
+        print_results $1
+	    exit 0
+	fi
+}
+
+calc_median () {
+    # Determine median offset
+	nums=$(echo "$1" | wc -w)
+	((medianOffset=nums/2))
+	if [[ $nums%2 ]]
+	then
+		((medianOffset++))
+	fi
+
+    # Assign median based on offset and print to temp file
+	sortedRowItems=$(echo "$1" | tr "\t" "\n" | sort -n | tr "\n" "\t")
+	median=$(echo "$sortedRowItems" | cut -f $medianOffset)
+	echo -e "$median\t\c" >> $mediansfile
+}
+
+calc_average () {
+	sum=0
+	count=0
+
+	for currentNumber in $1
+	do
+		((count++)) 
+		((sum=sum+$currentNumber))
+	done
+
+	((average=(sum+count/2)/count)) # Round-up formula: (a + (b/2)) / b 
+	echo -e "$average\t\c"  >> $averagesfile
+}
+
+write_results_to_file (){
+    if [[ $1 == -c* ]]
+    then
+        convert_columns_to_rows
+    fi
+
+    while read line
+    do
+        calc_average "$line"
+        calc_median "$line"
+    done < $datafilepath
+}
+
+convert_columns_to_rows () {
+    # Determine how many columns exist and prepare a temp file to receive them
+	tempColFile="evvikare_temp_tempColFile$$"
+	colCount=1
+	numOfColumns=$(head -n 1 $datafilepath | wc -w)
+
+    # Grab the i-th element of each row and add it to the temp column file
+	while [[ $colCount -le $numOfColumns ]]
+	do				
+		colToRow=$(cut -f $colCount $datafilepath | tr "\n" "\t")
+		echo "$colToRow" >> $tempColFile
+		((colCount++))
+	done
+
+	datafilepath=$tempColFile
+}
+
+print_results () {
+    if [[ $1 == -c* ]]
+    then
+        print_helper "Averages:" "$avgs" "-c"
+        print_helper "Medians:" "$meds" "-c"
+    else
+        print_helper "Average\tMedian" "$avgs" "-r"
+    fi
+}
+
+print_helper () {                               # (Less dup'ed code, but tricky)
+    offset=0                                    # Unused for -c option
+    echo -e $1                                  # Print the header argument
+    for item in $2                              # Loop through the given stat
+    do
+        echo -e "$item\t\c"
+        if [[ $3 == -r* ]]                      # Find "partner" median
+        then                        
+            ((offset++)) 
+            medForCols=$(echo "$meds" | cut -f $offset)
+            echo -e "$medForCols"           
+        fi
+    done
+    if [[ $3 == -c* ]]; then echo -e ""; fi     # Extra linebreak for -c option
+}
+
+command_validation $*
+get_data_from_source $*
+write_results_to_file $1                        # Put calculations in temp files
+avgs=$(head -n 1 "$averagesfile")               # Put all averages in avgs
+meds=$(head -n 1 "$mediansfile")                # Put all medians in meds
+print_results $1                                # Print the values in avgs/meds
+
+rm -f evvikare_temp*                            # Clean-up
